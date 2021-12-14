@@ -65,7 +65,7 @@ class LinearCCA(object):
 class KernelCCA(object):
 
     def __init__(self, n_components, kernel='linear', kernel_params=[],
-                 nystrom_approximation=False, reg_param=0.1):
+                 nystrom_approximation_ratio=1.0, reg_param=0.1):
         self._n_components = n_components
         self._reg_param = reg_param
         self._alpha = None
@@ -73,7 +73,7 @@ class KernelCCA(object):
         self._X = None
         self._Y = None
 
-        self._nystrom_approximation = nystrom_approximation
+        self._nystrom_approximation_ratio = nystrom_approximation_ratio
 
         if kernel == 'linear':
             self._kernel = linear_kernel
@@ -83,6 +83,12 @@ class KernelCCA(object):
             self._kernel = lambda x, y: kernel(x, y, *kernel_params)
 
     def fit(self, X, Y):
+        sample_idx = numpy.random.choice(
+            X.shape[0], int(X.shape[0] * self._nystrom_approximation_ratio),
+            replace=False)
+        X = X[sample_idx]
+        Y = Y[sample_idx]
+
         num_samples = X.shape[0]
         self._X = X
         self._Y = Y
@@ -90,31 +96,44 @@ class KernelCCA(object):
         Kx = sklearn.metrics.pairwise_distances(X, metric=self._kernel)
         Ky = sklearn.metrics.pairwise_distances(Y, metric=self._kernel)
 
+        # solve generalize eigenvalue problem
         Z = numpy.zeros(shape=(num_samples, num_samples))
         A = numpy.block([[Z, Kx.dot(Ky)], [Ky.dot(Kx), Z]])
         B = numpy.block([
             [Kx.dot(Kx) + self._reg_param * Kx, Z],
-            [Z, Ky.dot(Ky) + self._reg_param* Ky]])
+            [Z, Ky.dot(Ky) + self._reg_param * Ky]])
 
-        # # solve generalize eigenvalue problem
-        # A = Ky.dot(numpy.linalg.inv(
-        #     Ky + self._reg_param * numpy.eye(Ky.shape[0]))).dot(Kx)
-        # B = (Kx + self._reg_param * numpy.eye(Kx.shape[0]))
         eig, coef = scipy.linalg.eig(A, B)
+        # negative eigenvalues and imaginary part of
+        # eigenvalues and eigenvectors are ignored
         eig = numpy.real(eig)
+        coef = numpy.real(coef)
         coef = coef[:, eig > 0]
         eig = eig[eig > 0]
 
+        # take top-k eigenvalues (k=self._n_components)
         idx = numpy.argsort(eig)[::-1]
         eig = eig[:self._n_components]
         self._alpha = coef[:num_samples, idx[:self._n_components]]
         self._beta = coef[num_samples:, idx[:self._n_components]]
 
+        return
+
+    def fit_transform(self, X, Y):
+        self.fit(X, Y)
+
+        Kx = sklearn.metrics.pairwise_distances(
+            self._X, X, metric=self._kernel)
+        Ky = sklearn.metrics.pairwise_distances(
+            self._Y, Y, metric=self._kernel)
+
         return self._alpha.T.dot(Kx), self._beta.T.dot(Ky)
 
     def predict(self, X, Y):
-        Kx = sklearn.metrics.pairwise_distances(self._X, X, metric=self._kenel)
-        Ky = sklearn.metrics.pairwise_distances(self._Y, Y, metric=self._kernel)
+        Kx = sklearn.metrics.pairwise_distances(
+            self._X, X, metric=self._kenel)
+        Ky = sklearn.metrics.pairwise_distances(
+            self._Y, Y, metric=self._kernel)
 
         return self._alpha.T.dot(Kx), self._beta.T.dot(Ky)
 
@@ -128,6 +147,8 @@ def rbf(x, y, sigma):
 
 
 if __name__ == '__main__':
+    numpy.random.seed(0)
+
     num_samples = 400
     x_dim = 2
     y_dim = 2
@@ -145,5 +166,6 @@ if __name__ == '__main__':
     Y[:, 0] = noise2 + u * 0.1
     Y[:, 1] = -noise2 + u * 0.1
 
-    model = KernelCCA(n_components=2, kernel='rbf', kernel_params=[0.1, ])
-    X2, Y2 = model.fit(X, Y)
+    model = KernelCCA(n_components=2, kernel='rbf', kernel_params=[0.1, ],
+                      nystrom_approximation_ratio=0.7)
+    X2, Y2 = model.fit_transform(X, Y)
