@@ -3,6 +3,7 @@ import numpy
 import scipy.linalg
 import sklearn.cross_decomposition
 import sklearn.metrics
+import pdb
 
 
 class LinearCCA(object):
@@ -54,12 +55,20 @@ class LinearCCA(object):
         self._wy = Cyy_inv.dot(Cxy.T).dot(self._wx)
         self._wy /= numpy.sqrt(eig)
 
+        self._correlation = numpy.diag(self._wx.T.dot(Cxy).dot(self._wy))
+
         return
 
     def fit_transform(self, X, Y):
         self.fit(X, Y)
+        return self.predict(X, Y)
 
-        return self._wx.T.dot(X.T).T, self._wy.T.dot(Y.T).T
+    def predict(self, X, Y):
+        return self._wx.T.dot(X.T), self._wy.T.dot(Y.T)
+
+    @property
+    def correlation_(self):
+        return self._correlation
 
 
 class KernelCCA(object):
@@ -104,24 +113,35 @@ class KernelCCA(object):
             [Z, Ky.dot(Ky) + self._reg_param * Ky]])
 
         eig, coef = scipy.linalg.eig(A, B)
-        # negative eigenvalues and imaginary part of
+        # nan, negative eigenvalues and imaginary part of
         # eigenvalues and eigenvectors are ignored
         eig = numpy.real(eig)
         coef = numpy.real(coef)
-        coef = coef[:, eig > 0]
-        eig = eig[eig > 0]
+        valid_idx = (eig > 0)
+        coef = coef[:, valid_idx]
+        eig = eig[valid_idx]
 
         # take top-k eigenvalues (k=self._n_components)
         idx = numpy.argsort(eig)[::-1]
-        eig = eig[:self._n_components]
+        eig = eig[idx[:self._n_components]]
         self._alpha = coef[:num_samples, idx[:self._n_components]]
         self._beta = coef[num_samples:, idx[:self._n_components]]
+
+        corr_xy = numpy.diag(
+            self._alpha.T.dot(Kx).dot(Ky).dot(self._beta))
+        corr_xx = numpy.diag(
+            self._alpha.T.dot(Kx).dot(Kx).dot(self._alpha))
+        corr_yy = numpy.diag(
+            self._beta.T.dot(Ky).dot(Ky).dot(self._beta))
+        self._correlation = corr_xy / numpy.sqrt(corr_xx * corr_yy)
 
         return
 
     def fit_transform(self, X, Y):
         self.fit(X, Y)
+        return self.predict(X, Y)
 
+    def predict(self, X, Y):
         Kx = sklearn.metrics.pairwise_distances(
             self._X, X, metric=self._kernel)
         Ky = sklearn.metrics.pairwise_distances(
@@ -129,13 +149,9 @@ class KernelCCA(object):
 
         return self._alpha.T.dot(Kx), self._beta.T.dot(Ky)
 
-    def predict(self, X, Y):
-        Kx = sklearn.metrics.pairwise_distances(
-            self._X, X, metric=self._kenel)
-        Ky = sklearn.metrics.pairwise_distances(
-            self._Y, Y, metric=self._kernel)
-
-        return self._alpha.T.dot(Kx), self._beta.T.dot(Ky)
+    @property
+    def correlation_(self):
+        return self._correlation
 
 
 def linear_kernel(x, y):
@@ -166,6 +182,8 @@ if __name__ == '__main__':
     Y[:, 0] = noise2 + u * 0.1
     Y[:, 1] = -noise2 + u * 0.1
 
-    model = KernelCCA(n_components=2, kernel='rbf', kernel_params=[0.1, ],
+    model = KernelCCA(n_components=20, kernel='rbf', kernel_params=[0.1, ],
                       nystrom_approximation_ratio=0.7)
     X2, Y2 = model.fit_transform(X, Y)
+
+    print(model.correlation_)
