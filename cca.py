@@ -3,7 +3,6 @@ import numpy
 import scipy.linalg
 import sklearn.cross_decomposition
 import sklearn.metrics
-import pdb
 
 
 class LinearCCA(object):
@@ -146,8 +145,13 @@ class KernelCCA(object):
             self._X, X, metric=self._kernel)
         Ky = sklearn.metrics.pairwise_distances(
             self._Y, Y, metric=self._kernel)
+        corr_xx = numpy.diag(
+            self._alpha.T.dot(Kx).dot(Kx.T).dot(self._alpha))
+        corr_yy = numpy.diag(
+            self._beta.T.dot(Ky).dot(Ky.T).dot(self._beta))
 
-        return self._alpha.T.dot(Kx), self._beta.T.dot(Ky)
+        return self._alpha.T.dot(Kx).T / numpy.sqrt(corr_xx),\
+            self._beta.T.dot(Ky).T / numpy.sqrt(corr_yy)
 
     @property
     def correlation_(self):
